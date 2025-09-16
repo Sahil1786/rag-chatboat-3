@@ -78,6 +78,7 @@ export const ChatInterface = () => {
       });
 
       if (!response.ok) {
+        console.error('Edge function error:', response.status, response.statusText);
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
@@ -100,8 +101,10 @@ export const ChatInterface = () => {
           if (line.startsWith('data: ')) {
             try {
               const data = JSON.parse(line.slice(6));
+              console.log('Received data:', data);
               
               if (data.error) {
+                console.error('Server error:', data.error);
                 throw new Error(data.error);
               }
               
@@ -127,7 +130,7 @@ export const ChatInterface = () => {
                 break;
               }
             } catch (parseError) {
-              console.error('Parse error:', parseError);
+              console.error('Parse error:', parseError, 'Line:', line);
             }
           }
         }

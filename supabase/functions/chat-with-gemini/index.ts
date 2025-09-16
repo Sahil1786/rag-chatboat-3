@@ -12,21 +12,28 @@ serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
-  try {
-    const { message } = await req.json();
-    const geminiApiKey = Deno.env.get('GEMINI_API_KEY');
+    try {
+      const { message } = await req.json();
+      const geminiApiKey = Deno.env.get('GEMINI_API_KEY');
 
-    if (!geminiApiKey) {
-      throw new Error('Gemini API key not configured');
-    }
+      if (!geminiApiKey) {
+        console.error('Gemini API key not configured');
+        return new Response(JSON.stringify({ 
+          error: 'Gemini API key not configured. Please add GEMINI_API_KEY to your Supabase secrets.' 
+        }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
 
-    console.log('Processing chat message:', message);
+      console.log('Processing chat message:', message);
 
     // Create a ReadableStream for streaming response
     const stream = new ReadableStream({
       async start(controller) {
         try {
           // Call Gemini API with streaming enabled
+          console.log('Calling Gemini API...');
           const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:streamGenerateContent?key=${geminiApiKey}`, {
             method: 'POST',
             headers: {
@@ -46,11 +53,13 @@ serve(async (req) => {
               }
             }),
           });
+          
+          console.log('Gemini API response status:', response.status);
 
           if (!response.ok) {
             const errorData = await response.text();
-            console.error('Gemini API error:', errorData);
-            controller.enqueue(`data: ${JSON.stringify({ error: `Gemini API error: ${response.status}` })}\n\n`);
+            console.error('Gemini API error:', response.status, errorData);
+            controller.enqueue(`data: ${JSON.stringify({ error: `Gemini API error: ${response.status} - ${errorData}` })}\n\n`);
             controller.close();
             return;
           }
@@ -75,22 +84,41 @@ serve(async (req) => {
               buffer = lines.pop() || '';
 
               for (const line of lines) {
-                if (line.trim() && line.startsWith('data: ')) {
-                  try {
-                    const jsonStr = line.slice(6);
-                    if (jsonStr === '[DONE]') {
-                      controller.enqueue(`data: ${JSON.stringify({ done: true })}\n\n`);
-                      continue;
+                if (line.trim()) {
+                  console.log('Processing line:', line);
+                  if (line.startsWith('data: ')) {
+                    try {
+                      const jsonStr = line.slice(6);
+                      if (jsonStr === '[DONE]') {
+                        controller.enqueue(`data: ${JSON.stringify({ done: true })}\n\n`);
+                        continue;
+                      }
+                      
+                      const parsed = JSON.parse(jsonStr);
+                      console.log('Parsed data:', JSON.stringify(parsed));
+                      const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
+                      
+                      if (text) {
+                        console.log('Sending text:', text);
+                        controller.enqueue(`data: ${JSON.stringify({ text })}\n\n`);
+                      }
+                    } catch (parseError) {
+                      console.error('Parse error:', parseError, 'Line:', line);
                     }
-                    
-                    const parsed = JSON.parse(jsonStr);
-                    const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
-                    
-                    if (text) {
-                      controller.enqueue(`data: ${JSON.stringify({ text })}\n\n`);
+                  } else {
+                    // Handle non-streaming response format
+                    try {
+                      const parsed = JSON.parse(line);
+                      const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
+                      if (text) {
+                        console.log('Non-streaming text:', text);
+                        controller.enqueue(`data: ${JSON.stringify({ text })}\n\n`);
+                        controller.enqueue(`data: ${JSON.stringify({ done: true })}\n\n`);
+                        break;
+                      }
+                    } catch (parseError) {
+                      // Ignore non-JSON lines
                     }
-                  } catch (parseError) {
-                    console.error('Parse error:', parseError);
                   }
                 }
               }
