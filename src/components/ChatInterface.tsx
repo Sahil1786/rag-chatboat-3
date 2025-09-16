@@ -68,11 +68,11 @@ export const ChatInterface = () => {
     setMessages(prev => [...prev, initialBotMessage]);
 
     try {
-      const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/chat-with-gemini`, {
+      const response = await fetch(`https://mkrquzrvhuxggxtfxvoo.supabase.co/functions/v1/chat-with-gemini`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+          'Authorization': `Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1rcnF1enJ2aHV4Z2d4dGZ4dm9vIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc5NTg3NTcsImV4cCI6MjA3MzUzNDc1N30.OutPyf_u3NJ78VTXZiIRlrGgWPEh4JhsIGG5sjmZ8Zg`,
         },
         body: JSON.stringify({ message: currentInput }),
       });
