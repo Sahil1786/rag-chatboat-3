@@ -55,23 +55,93 @@ export const ChatInterface = () => {
     setInputValue('');
     setIsLoading(true);
 
+    // Create a streaming bot message
+    const botMessageId = (Date.now() + 1).toString();
+    const initialBotMessage: Message = {
+      id: botMessageId,
+      text: '',
+      sender: 'bot',
+      timestamp: new Date(),
+      isStreaming: true,
+    };
+    
+    setMessages(prev => [...prev, initialBotMessage]);
+
     try {
-      const { data, error } = await supabase.functions.invoke('chat-with-gemini', {
-        body: { message: currentInput }
+      const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/chat-with-gemini`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+        },
+        body: JSON.stringify({ message: currentInput }),
       });
 
-      if (error) {
-        throw error;
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
       }
 
-      const botMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        text: data.response || 'Sorry, I could not generate a response.',
-        sender: 'bot',
-        timestamp: new Date(),
-      };
-      
-      setMessages(prev => [...prev, botMessage]);
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error('No response body');
+      }
+
+      const decoder = new TextDecoder();
+      let accumulatedText = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value, { stream: true });
+        const lines = chunk.split('\n');
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              
+              if (data.error) {
+                throw new Error(data.error);
+              }
+              
+              if (data.text) {
+                accumulatedText += data.text;
+                setMessages(prev => 
+                  prev.map(msg => 
+                    msg.id === botMessageId 
+                      ? { ...msg, text: accumulatedText }
+                      : msg
+                  )
+                );
+              }
+              
+              if (data.done) {
+                setMessages(prev => 
+                  prev.map(msg => 
+                    msg.id === botMessageId 
+                      ? { ...msg, isStreaming: false }
+                      : msg
+                  )
+                );
+                break;
+              }
+            } catch (parseError) {
+              console.error('Parse error:', parseError);
+            }
+          }
+        }
+      }
+
+      // Ensure streaming is marked as complete
+      setMessages(prev => 
+        prev.map(msg => 
+          msg.id === botMessageId 
+            ? { ...msg, isStreaming: false, text: accumulatedText || 'Sorry, I could not generate a response.' }
+            : msg
+        )
+      );
+
     } catch (error) {
       console.error('Error calling chat function:', error);
       toast({
@@ -80,13 +150,14 @@ export const ChatInterface = () => {
         variant: "destructive",
       });
       
-      const errorMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        text: 'Sorry, I encountered an error. Please try again.',
-        sender: 'bot',
-        timestamp: new Date(),
-      };
-      setMessages(prev => [...prev, errorMessage]);
+      // Replace the streaming message with error message
+      setMessages(prev => 
+        prev.map(msg => 
+          msg.id === botMessageId 
+            ? { ...msg, text: 'Sorry, I encountered an error. Please try again.', isStreaming: false }
+            : msg
+        )
+      );
     } finally {
       setIsLoading(false);
     }
