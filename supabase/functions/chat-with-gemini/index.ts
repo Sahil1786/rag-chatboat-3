@@ -64,6 +64,26 @@ serve(async (req) => {
             return;
           }
 
+          // Check if the response is streaming or not
+          const contentType = response.headers.get('content-type');
+          const isStreaming = contentType?.includes('text/plain') || contentType?.includes('text/event-stream');
+
+          if (!isStreaming) {
+            // Handle non-streaming response
+            const data = await response.json();
+            console.log('Non-streaming response:', JSON.stringify(data));
+            const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+            
+            if (text) {
+              console.log('Sending non-streaming text:', text);
+              controller.enqueue(`data: ${JSON.stringify({ text })}\n\n`);
+            }
+            controller.enqueue(`data: ${JSON.stringify({ done: true })}\n\n`);
+            controller.close();
+            return;
+          }
+
+          // Handle streaming response
           const reader = response.body?.getReader();
           if (!reader) {
             controller.enqueue(`data: ${JSON.stringify({ error: 'No response body' })}\n\n`);
@@ -85,40 +105,25 @@ serve(async (req) => {
 
               for (const line of lines) {
                 if (line.trim()) {
-                  console.log('Processing line:', line);
-                  if (line.startsWith('data: ')) {
-                    try {
-                      const jsonStr = line.slice(6);
-                      if (jsonStr === '[DONE]') {
-                        controller.enqueue(`data: ${JSON.stringify({ done: true })}\n\n`);
-                        continue;
-                      }
-                      
-                      const parsed = JSON.parse(jsonStr);
-                      console.log('Parsed data:', JSON.stringify(parsed));
-                      const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
-                      
-                      if (text) {
-                        console.log('Sending text:', text);
-                        controller.enqueue(`data: ${JSON.stringify({ text })}\n\n`);
-                      }
-                    } catch (parseError) {
-                      console.error('Parse error:', parseError, 'Line:', line);
+                  console.log('Processing streaming line:', line);
+                  
+                  // Try to parse as JSON directly (Gemini's format)
+                  try {
+                    const parsed = JSON.parse(line);
+                    const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
+                    
+                    if (text) {
+                      console.log('Sending streaming text:', text);
+                      controller.enqueue(`data: ${JSON.stringify({ text })}\n\n`);
                     }
-                  } else {
-                    // Handle non-streaming response format
-                    try {
-                      const parsed = JSON.parse(line);
-                      const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
-                      if (text) {
-                        console.log('Non-streaming text:', text);
-                        controller.enqueue(`data: ${JSON.stringify({ text })}\n\n`);
-                        controller.enqueue(`data: ${JSON.stringify({ done: true })}\n\n`);
-                        break;
-                      }
-                    } catch (parseError) {
-                      // Ignore non-JSON lines
+                    
+                    // Check if this is the final chunk
+                    if (parsed.candidates?.[0]?.finishReason === 'STOP') {
+                      controller.enqueue(`data: ${JSON.stringify({ done: true })}\n\n`);
+                      break;
                     }
+                  } catch (parseError) {
+                    console.log('Skipping non-JSON line:', line);
                   }
                 }
               }
