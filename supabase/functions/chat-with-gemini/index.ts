@@ -64,23 +64,31 @@ serve(async (req) => {
             return;
           }
 
-          // Check if the response is streaming or not
-          const contentType = response.headers.get('content-type');
-          const isStreaming = contentType?.includes('text/plain') || contentType?.includes('text/event-stream');
-
-          if (!isStreaming) {
-            // Handle non-streaming response
+          // Always try to handle as non-streaming first since Gemini API returns JSON
+          try {
             const data = await response.json();
-            console.log('Non-streaming response:', JSON.stringify(data));
+            console.log('Gemini response data:', JSON.stringify(data, null, 2));
             const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
             
             if (text) {
-              console.log('Sending non-streaming text:', text);
-              controller.enqueue(`data: ${JSON.stringify({ text })}\n\n`);
+              console.log('Sending text to frontend:', text);
+              // Send the text in proper SSE format
+              const encoder = new TextEncoder();
+              const sseData = `data: ${JSON.stringify({ text })}\n\n`;
+              controller.enqueue(encoder.encode(sseData));
+              
+              // Send done signal
+              const sseDone = `data: ${JSON.stringify({ done: true })}\n\n`;
+              controller.enqueue(encoder.encode(sseDone));
+            } else {
+              console.log('No text found in response');
+              const sseError = `data: ${JSON.stringify({ error: 'No text in response' })}\n\n`;
+              controller.enqueue(encoder.encode(sseError));
             }
-            controller.enqueue(`data: ${JSON.stringify({ done: true })}\n\n`);
             controller.close();
             return;
+          } catch (jsonError) {
+            console.log('Not JSON response, trying streaming...', jsonError);
           }
 
           // Handle streaming response
